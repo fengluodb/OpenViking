@@ -22,6 +22,7 @@ def _generate_plugin_config(agfs_config: Any, data_path: Path) -> Dict[str, Any]
     else:
         queue_db_path = str(default_queue_db_path)
 
+
     config = {
         "serverinfofs": {
             "enabled": True,
