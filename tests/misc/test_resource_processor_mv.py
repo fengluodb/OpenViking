@@ -41,7 +41,13 @@ class _CtxMgr:
 
 class _FakeVikingFS:
     def __init__(self, *, exists_result=False):
-        self.agfs = SimpleNamespace(mv=MagicMock(return_value={"status": "ok"}))
+        self.agfs = SimpleNamespace(
+            mv=MagicMock(return_value={"status": "ok"}),
+            # _move_temp_to_resource stats the src first; returning
+            # isDir=False keeps the original test path (agfs.mv for files).
+            stat=MagicMock(return_value={"isDir": False}),
+            rm=MagicMock(return_value={"status": "ok"}),
+        )
         self._exists_result = exists_result
 
     def bind_request_context(self, ctx):

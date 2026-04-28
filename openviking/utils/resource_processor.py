@@ -28,6 +28,36 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 
+def _move_temp_to_resource(agfs: Any, src_path: str, dst_path: str) -> None:
+    """Move a temp entry to its resource location.
+
+    For files we use ``agfs.mv`` (a simple rename). For directories we fall
+    back to recursive copy + remove because some FUSE-mounted object stores
+    (e.g. TOS / hpvs_fs) do not implement directory rename and return ENOSYS.
+    """
+    from openviking.pyagfs.helpers import cp as agfs_cp
+
+    try:
+        info = agfs.stat(src_path)
+    except Exception:
+        # Let the caller handle NotFound etc., matching the original mv behavior.
+        agfs.mv(src_path, dst_path)
+        return
+
+    is_dir = info.get("isDir", False) if isinstance(info, dict) else False
+    if not is_dir:
+        agfs.mv(src_path, dst_path)
+        return
+
+    agfs_cp(agfs, src_path, dst_path, recursive=True)
+    try:
+        agfs.rm(src_path, recursive=True)
+    except Exception as e:
+        logger.warning(
+            f"[ResourceProcessor] Failed to remove temp dir {src_path} after copy: {e}"
+        )
+
+
 class ResourceProcessor:
     """
     Handles coordinated write operations.
@@ -280,7 +310,13 @@ class ResourceProcessor:
                                 dst_path = viking_fs._uri_to_path(root_uri, ctx=ctx)
 
                             src_path = viking_fs._uri_to_path(temp_uri, ctx=ctx)
-                            await asyncio.to_thread(viking_fs.agfs.mv, src_path, dst_path)
+                            # Some underlying FS (e.g. TOS/hpvs_fs FUSE mounts)
+                            # do not support directory rename (ENOSYS), so for
+                            # directories we fall back to recursive cp + rm.
+                            # Files still use mv.
+                            await asyncio.to_thread(
+                                _move_temp_to_resource, viking_fs.agfs, src_path, dst_path
+                            )
 
                             lifecycle_lock_handle_id = await self._try_acquire_lifecycle_lock(
                                 lock_manager, dst_path
