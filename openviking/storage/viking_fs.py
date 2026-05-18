@@ -577,7 +577,15 @@ class VikingFS:
                 if mapped is not None:
                     raise mapped from exc
                 raise
-        if isinstance(dst_stat, dict) and dst_stat.get("isDir", False):
+        dst_is_dir = isinstance(dst_stat, dict) and dst_stat.get("isDir", False)
+        # A trailing slash on dst means the user explicitly wants it treated
+        # as a directory. If dst does not exist (or is not a directory), this
+        # is an error - do NOT silently create a regular file named like the
+        # directory.
+        dst_must_be_dir = new_uri.endswith("/")
+        if dst_must_be_dir and not dst_is_dir:
+            raise NotFoundError(new_uri, "directory")
+        if dst_is_dir:
             basename = old_path.rstrip("/").rsplit("/", 1)[-1]
             if not basename:
                 raise ValueError(f"mv source has no basename: {old_uri}")
