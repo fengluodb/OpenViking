@@ -549,7 +549,7 @@ class VikingFS:
         self._ensure_mutable_access(new_uri, ctx)
         old_path = self._uri_to_path(old_uri, ctx=ctx)
         new_path = self._uri_to_path(new_uri, ctx=ctx)
-        target_uri = self._path_to_uri(old_path, ctx=ctx)
+        old_self_uri = self._path_to_uri(old_path, ctx=ctx)
 
         # Verify source exists and determine type before locking.
         try:
@@ -562,6 +562,27 @@ class VikingFS:
                     raise mapped from exc
                 raise
             raise FileNotFoundError(f"mv source not found: {old_uri}") from exc
+
+        # If destination already exists and is a directory, follow Unix `mv`
+        # semantics: move source *into* that directory as <dst>/<basename(src)>.
+        # Without this, copying a file/dir onto an existing directory path
+        # bubbles up as a generic backend error -> [INTERNAL] Internal server error.
+        try:
+            dst_stat = await self._run_in_threadpool(self.agfs.stat, new_path)
+        except Exception as exc:
+            if is_not_found_error(exc):
+                dst_stat = None
+            else:
+                mapped = map_exception(exc, resource=new_uri)
+                if mapped is not None:
+                    raise mapped from exc
+                raise
+        if isinstance(dst_stat, dict) and dst_stat.get("isDir", False):
+            basename = old_path.rstrip("/").rsplit("/", 1)[-1]
+            if not basename:
+                raise ValueError(f"mv source has no basename: {old_uri}")
+            new_path = new_path.rstrip("/") + "/" + basename
+            new_uri = new_uri.rstrip("/") + "/" + basename
 
         lock_context = (
             LockContext(
@@ -583,7 +604,7 @@ class VikingFS:
 
         async with lock_context:
             uris_to_move = await self._collect_uris(old_path, recursive=True, ctx=ctx)
-            uris_to_move.append(target_uri)
+            uris_to_move.append(old_self_uri)
 
             # Check if it's temp directory (files already encrypted)
             is_temp = old_uri.startswith("viking://temp/")
